@@ -37,4 +37,9 @@ jobs:
         run: npm ci
 
       - name: Build Next.js
+        env:
+          # Clerk requires keys at build time (layout wraps pages in ClerkProvider).
+          # Placeholders are fine for CI — real keys live in Vercel / local .env.
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2ktYnVpbGQtcGxhY2Vob2xkZXIk
+          CLERK_SECRET_KEY: sk_test_ci_build_placeholder_not_a_real_secret
         run: npm run build
