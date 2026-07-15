@@ -257,23 +257,13 @@ export default function TelegramMiniAppPage() {
 
       {!inTelegram && (
         <p className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          For the best experience, open this page from the Telegram bot menu
-          (Open App). You can still test with chat ID in dev mode below.
+          Open this page from the BrightCare Telegram bot menu (Open App) to
+          book.
         </p>
       )}
 
       {step === "history" && (
         <div className="mt-6 space-y-3">
-          {!chatId && (
-            <label className="block">
-              <span className="text-sm font-medium">Chat ID (dev only)</span>
-              <input
-                className="mt-1 w-full rounded-md border border-[var(--line)] bg-white px-3 py-2"
-                placeholder="Telegram chat id"
-                onChange={(e) => setChatId(e.target.value || null)}
-              />
-            </label>
-          )}
           {appointments.length === 0 ? (
             <p className="text-sm text-[var(--muted)]">No appointments yet.</p>
           ) : (
@@ -352,16 +342,6 @@ export default function TelegramMiniAppPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </label>
-          {!chatId && (
-            <label className="block">
-              <span className="text-sm font-medium">Chat ID (dev only)</span>
-              <input
-                className="mt-1 w-full rounded-md border border-[var(--line)] bg-white px-3 py-2"
-                placeholder="Telegram chat id"
-                onChange={(e) => setChatId(e.target.value || null)}
-              />
-            </label>
-          )}
           <button
             type="button"
             disabled={loading}
