@@ -33,6 +33,8 @@ class Settings:
     smtp_user: str | None
     smtp_app_password: str | None
     smtp_from: str | None
+    resend_api_key: str | None
+    email_from: str | None
     clerk_jwks_url: str | None
     clinic_name: str
     telegram_webapp_url: str | None
@@ -100,6 +102,12 @@ def get_settings() -> Settings:
         session_store = "postgres" if database_url else "sqlite"
 
     smtp_user = _env("SMTP_USER")
+    smtp_from = _env("SMTP_FROM") or smtp_user
+    email_from = (
+        _env("EMAIL_FROM")
+        or _env("RESEND_FROM")
+        or smtp_from
+    )
     return Settings(
         clinic_timezone=tz_name,
         clinic_tz=clinic_tz,
@@ -117,7 +125,9 @@ def get_settings() -> Settings:
         smtp_port=int(_env("SMTP_PORT", "587") or "587"),
         smtp_user=smtp_user,
         smtp_app_password=_env("SMTP_APP_PASSWORD"),
-        smtp_from=_env("SMTP_FROM") or smtp_user,
+        smtp_from=smtp_from,
+        resend_api_key=_env("RESEND_API_KEY"),
+        email_from=email_from,
         clerk_jwks_url=_env("CLERK_JWKS_URL"),
         clinic_name=_env("CLINIC_NAME", "BrightCare Clinic") or "BrightCare Clinic",
         telegram_webapp_url=_env("TELEGRAM_WEBAPP_URL")

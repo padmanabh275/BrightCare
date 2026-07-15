@@ -39,6 +39,9 @@ def test_notes_heuristic_without_openai(monkeypatch):
 def test_send_patient_letter_skipped_when_smtp_off(monkeypatch):
     monkeypatch.setenv("SMTP_USER", "")
     monkeypatch.setenv("SMTP_APP_PASSWORD", "")
+    monkeypatch.setenv("SMTP_FROM", "")
+    monkeypatch.setenv("RESEND_API_KEY", "")
+    monkeypatch.setenv("EMAIL_FROM", "")
     from api.config import get_settings
 
     get_settings.cache_clear()
@@ -50,6 +53,7 @@ def test_send_patient_letter_sent(monkeypatch):
     monkeypatch.setenv("SMTP_USER", "clinic@test.com")
     monkeypatch.setenv("SMTP_APP_PASSWORD", "app-pass")
     monkeypatch.setenv("SMTP_FROM", "clinic@test.com")
+    monkeypatch.setenv("RESEND_API_KEY", "")
     from api.config import get_settings
 
     get_settings.cache_clear()
@@ -74,5 +78,36 @@ def test_send_patient_letter_sent(monkeypatch):
             pass
 
     with patch("api.integrations.emailer.smtplib.SMTP", FakeSMTP):
+        assert send_patient_letter("patient@test.com", "Subject", "Hello") == "sent"
+    get_settings.cache_clear()
+
+
+def test_send_patient_letter_via_resend(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("EMAIL_FROM", "BrightCare <onboarding@resend.dev>")
+    monkeypatch.setenv("SMTP_USER", "")
+    monkeypatch.setenv("SMTP_APP_PASSWORD", "")
+    from api.config import get_settings
+
+    get_settings.cache_clear()
+
+    class FakeResponse:
+        status_code = 200
+        text = "{}"
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, *a, **k):
+            return FakeResponse()
+
+    with patch("api.integrations.emailer.httpx.Client", FakeClient):
         assert send_patient_letter("patient@test.com", "Subject", "Hello") == "sent"
     get_settings.cache_clear()

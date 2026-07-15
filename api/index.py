@@ -18,7 +18,7 @@ from api.agent.session import ConversationState, session_store
 from api.agent import timeutil
 from api.config import get_settings
 from api.integrations.calendar import get_calendar, list_available_slots
-from api.integrations.emailer import send_patient_letter, smtp_configured
+from api.integrations.emailer import email_configured, send_patient_letter
 from api.integrations.health_probes import run_all_probes
 from api.integrations.telegram_bot import telegram_runtime
 from api.jobs.reminders import run_reminders, run_waitlist_check
@@ -328,10 +328,10 @@ async def notes_send(
         raise HTTPException(status_code=400, detail="Valid patient_email required")
     if not subject or not body:
         raise HTTPException(status_code=400, detail="subject and body required")
-    if not smtp_configured():
+    if not email_configured():
         raise HTTPException(
             status_code=503,
-            detail="SMTP is not configured — set SMTP_USER and SMTP_APP_PASSWORD",
+            detail="Email is not configured — set RESEND_API_KEY (recommended on Render) or SMTP_*",
         )
 
     status = send_patient_letter(patient_email, subject, body)
@@ -346,7 +346,7 @@ async def notes_send(
     if status == "failed":
         raise HTTPException(
             status_code=502,
-            detail="Could not send email — check SMTP credentials and try again",
+            detail="Could not send email — check RESEND_API_KEY / EMAIL_FROM (or SMTP) and try again",
         )
     if status == "skipped":
         raise HTTPException(status_code=503, detail="Email sending skipped")

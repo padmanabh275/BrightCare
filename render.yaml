@@ -52,6 +52,10 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       - key: CLERK_JWKS_URL
         sync: false
       - key: JOBS_SECRET

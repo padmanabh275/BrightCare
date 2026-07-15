@@ -46,10 +46,29 @@ def probe_calendar() -> dict[str, Any]:
         return {"ok": False, "detail": str(exc)}
 
 
-def probe_smtp() -> dict[str, Any]:
+def probe_email() -> dict[str, Any]:
+    """Prefer Resend (HTTPS) on Render free; SMTP only works on paid / local."""
     settings = get_settings()
+    if settings.resend_api_key:
+        if not settings.email_from:
+            return {"ok": False, "detail": "RESEND_API_KEY set but EMAIL_FROM / RESEND_FROM missing"}
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(
+                    "https://api.resend.com/domains",
+                    headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+                )
+            if resp.status_code < 400:
+                return {"ok": True, "detail": "Resend API reachable (HTTPS)"}
+            return {"ok": False, "detail": f"Resend API {resp.status_code}: {resp.text[:120]}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "detail": str(exc)}
+
     if not settings.smtp_user or not settings.smtp_app_password:
-        return {"ok": False, "detail": "SMTP credentials not configured"}
+        return {
+            "ok": False,
+            "detail": "Set RESEND_API_KEY (+ EMAIL_FROM) for Render free, or SMTP_* locally",
+        }
     try:
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
             server.starttls()
@@ -79,12 +98,12 @@ def probe_openai() -> dict[str, Any]:
 async def run_all_probes() -> dict[str, Any]:
     telegram = await probe_telegram()
     calendar = probe_calendar()
-    smtp = probe_smtp()
+    email = probe_email()
     openai = probe_openai()
     return {
         "telegram": telegram,
         "calendar": calendar,
-        "email": smtp,
+        "email": email,
         "openai": openai,
-        "all_ok": all(p["ok"] for p in (telegram, calendar, smtp, openai)),
+        "all_ok": all(p["ok"] for p in (telegram, calendar, email, openai)),
     }

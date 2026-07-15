@@ -326,7 +326,8 @@ Blueprint: [`render.yaml`](render.yaml).
 | `OPENAI_API_KEY` | |
 | `GOOGLE_CALENDAR_ID` | clinic calendar id |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | full JSON from `credentials.json` (or base64) |
-| `SMTP_USER` / `SMTP_APP_PASSWORD` / `SMTP_FROM` | Gmail app password |
+| `RESEND_API_KEY` / `EMAIL_FROM` | Resend HTTPS email (required on Render free) |
+| `SMTP_USER` / `SMTP_APP_PASSWORD` / `SMTP_FROM` | optional local/paid SMTP fallback |
 | `CLERK_JWKS_URL` | for `/api/status` and notes |
 
 3. After first deploy, set `PUBLIC_BASE_URL` to the live service URL → Manual Deploy.

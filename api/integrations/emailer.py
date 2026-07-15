@@ -1,7 +1,8 @@
-"""Email confirmation via Gmail SMTP with optional .ics attachment."""
+"""Email via Resend HTTPS (Render-safe) with Gmail SMTP fallback for local."""
 
 from __future__ import annotations
 
+import base64
 import logging
 import smtplib
 import uuid
@@ -11,11 +12,15 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import encoders
 
+import httpx
+
 from api.agent import business, timeutil
 from api.integrations.calendar import slot_end
 from api.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+RESEND_API = "https://api.resend.com/emails"
 
 
 def build_ics(
@@ -26,11 +31,11 @@ def build_ics(
     start = timeutil.to_clinic(start)
     end = slot_end(start)
     uid = event_uid or f"{uuid.uuid4()}@brightcare"
-    # Floating local times with TZID for clinic timezone
     tzid = get_settings().clinic_timezone
     dt_start = start.strftime("%Y%m%dT%H%M%S")
     dt_end = end.strftime("%Y%m%dT%H%M%S")
     stamp = timeutil.as_utc(timeutil.clinic_now()).strftime("%Y%m%dT%H%M%SZ")
+    organizer = get_settings().email_from or "noreply@brightcare.local"
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -45,7 +50,7 @@ def build_ics(
         f"SUMMARY:{business.CLINIC_NAME} appointment",
         f"DESCRIPTION:Appointment at {business.CLINIC_NAME}\\, {business.LOCATION}",
         f"LOCATION:{business.LOCATION}",
-        f"ORGANIZER:MAILTO:{get_settings().smtp_from or 'noreply@brightcare.local'}",
+        f"ORGANIZER:MAILTO:{organizer}",
         f"ATTENDEE:MAILTO:{patient_email}",
         "END:VEVENT",
         "END:VCALENDAR",
@@ -55,7 +60,116 @@ def build_ics(
 
 def smtp_configured() -> bool:
     s = get_settings()
-    return bool(s.smtp_user and s.smtp_app_password and s.smtp_from)
+    return bool(s.smtp_user and s.smtp_app_password and s.email_from)
+
+
+def resend_configured() -> bool:
+    s = get_settings()
+    return bool(s.resend_api_key and s.email_from)
+
+
+def email_configured() -> bool:
+    """True if any outbound email transport is ready (prefer Resend on Render)."""
+    return resend_configured() or smtp_configured()
+
+
+def _send_via_resend(
+    to_email: str,
+    subject: str,
+    body: str,
+    *,
+    ics_filename: str | None = None,
+    ics_body: str | None = None,
+) -> None:
+    settings = get_settings()
+    payload: dict[str, object] = {
+        "from": settings.email_from,
+        "to": [to_email],
+        "subject": subject,
+        "text": body,
+    }
+    if ics_filename and ics_body:
+        payload["attachments"] = [
+            {
+                "filename": ics_filename,
+                "content": base64.b64encode(ics_body.encode("utf-8")).decode("ascii"),
+            }
+        ]
+    headers = {
+        "Authorization": f"Bearer {settings.resend_api_key}",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(RESEND_API, json=payload, headers=headers)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Resend API {resp.status_code}: {resp.text[:300]}")
+
+
+def _send_via_smtp(
+    to_email: str,
+    subject: str,
+    body: str,
+    *,
+    ics_filename: str | None = None,
+    ics_body: str | None = None,
+) -> None:
+    settings = get_settings()
+    msg = MIMEMultipart()
+    msg["From"] = settings.email_from or ""
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    if ics_filename and ics_body:
+        part = MIMEBase("text", "calendar", method="PUBLISH", name=ics_filename)
+        part.set_payload(ics_body.encode("utf-8"))
+        encoders.encode_base64(part)
+        part.add_header(
+            "Content-Disposition", "attachment", filename=ics_filename
+        )
+        part.add_header("Content-Class", "urn:content-classes:calendarmessage")
+        msg.attach(part)
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
+        server.starttls()
+        server.login(settings.smtp_user or "", settings.smtp_app_password or "")
+        server.sendmail(settings.email_from or "", [to_email], msg.as_string())
+
+
+def _deliver(
+    to_email: str,
+    subject: str,
+    body: str,
+    *,
+    ics_filename: str | None = None,
+    ics_body: str | None = None,
+) -> str:
+    """Returns 'sent' | 'skipped' | 'failed'."""
+    if not email_configured():
+        logger.warning("Email not configured (set RESEND_API_KEY or SMTP_*); skipping")
+        return "skipped"
+
+    try:
+        if resend_configured():
+            _send_via_resend(
+                to_email,
+                subject,
+                body,
+                ics_filename=ics_filename,
+                ics_body=ics_body,
+            )
+        else:
+            _send_via_smtp(
+                to_email,
+                subject,
+                body,
+                ics_filename=ics_filename,
+                ics_body=ics_body,
+            )
+        return "sent"
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to send email to %s", to_email)
+        return "failed"
 
 
 def send_confirmation_email(
@@ -64,11 +178,6 @@ def send_confirmation_email(
     booking_id: str | None = None,
 ) -> str:
     """Send confirmation. Returns 'sent' | 'skipped' | 'failed'."""
-    settings = get_settings()
-    if not smtp_configured():
-        logger.warning("SMTP not configured; skipping email")
-        return "skipped"
-
     start = timeutil.to_clinic(start)
     when = timeutil.format_slot(start)
     subject = f"Your appointment at {business.CLINIC_NAME}"
@@ -81,30 +190,14 @@ def send_confirmation_email(
         f"To cancel, message the clinic on Telegram.\n\n"
         f"— {business.CLINIC_NAME}\n"
     )
-
-    msg = MIMEMultipart()
-    msg["From"] = settings.smtp_from or ""
-    msg["To"] = patient_email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-
     ics = build_ics(start, patient_email, event_uid=booking_id)
-    part = MIMEBase("text", "calendar", method="PUBLISH", name="appointment.ics")
-    part.set_payload(ics.encode("utf-8"))
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", "attachment", filename="appointment.ics")
-    part.add_header("Content-Class", "urn:content-classes:calendarmessage")
-    msg.attach(part)
-
-    try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
-            server.starttls()
-            server.login(settings.smtp_user or "", settings.smtp_app_password or "")
-            server.sendmail(settings.smtp_from or "", [patient_email], msg.as_string())
-        return "sent"
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to send confirmation email")
-        return "failed"
+    return _deliver(
+        patient_email,
+        subject,
+        body,
+        ics_filename="appointment.ics",
+        ics_body=ics,
+    )
 
 
 def send_cancellation_email(
@@ -112,10 +205,6 @@ def send_cancellation_email(
     start: datetime,
 ) -> str:
     """Send cancellation notice. Returns 'sent' | 'skipped' | 'failed'."""
-    settings = get_settings()
-    if not smtp_configured():
-        return "skipped"
-
     start = timeutil.to_clinic(start)
     when = timeutil.format_slot(start)
     subject = f"Appointment cancelled — {business.CLINIC_NAME}"
@@ -127,22 +216,7 @@ def send_cancellation_email(
         f"To book again, message us on Telegram.\n\n"
         f"— {business.CLINIC_NAME}\n"
     )
-
-    msg = MIMEMultipart()
-    msg["From"] = settings.smtp_from or ""
-    msg["To"] = patient_email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
-            server.starttls()
-            server.login(settings.smtp_user or "", settings.smtp_app_password or "")
-            server.sendmail(settings.smtp_from or "", [patient_email], msg.as_string())
-        return "sent"
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to send cancellation email")
-        return "failed"
+    return _deliver(patient_email, subject, body)
 
 
 def send_patient_letter(
@@ -151,27 +225,8 @@ def send_patient_letter(
     body: str,
 ) -> str:
     """Send staff-approved patient communication. Returns 'sent' | 'skipped' | 'failed'."""
-    settings = get_settings()
-    if not smtp_configured():
-        logger.warning("SMTP not configured; skipping patient letter")
-        return "skipped"
-
-    msg = MIMEMultipart()
-    msg["From"] = settings.smtp_from or ""
-    msg["To"] = patient_email.strip()
-    msg["Subject"] = subject.strip() or f"Message from {business.CLINIC_NAME}"
-    msg.attach(MIMEText(body.strip(), "plain"))
-
-    try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
-            server.starttls()
-            server.login(settings.smtp_user or "", settings.smtp_app_password or "")
-            server.sendmail(
-                settings.smtp_from or "",
-                [patient_email.strip()],
-                msg.as_string(),
-            )
-        return "sent"
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to send patient letter to %s", patient_email)
-        return "failed"
+    return _deliver(
+        patient_email.strip(),
+        subject.strip() or f"Message from {business.CLINIC_NAME}",
+        body.strip(),
+    )
