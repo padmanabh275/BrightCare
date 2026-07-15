@@ -1,4 +1,13 @@
-fastapi
-uvicorn
+fastapi==0.115.6
+starlette==0.41.3
+uvicorn[standard]==0.32.1
 openai
+httpx
+google-api-python-client
+google-auth
+PyJWT
+cryptography
 fastapi-clerk-auth
+python-dotenv
+pytest
+pytest-asyncio

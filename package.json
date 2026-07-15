@@ -1,23 +1,19 @@
 {
-  "name": "saas",
+  "name": "brightcare-clinic",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "conda run -n torch_env pytest -q"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.0",
-    "@microsoft/fetch-event-source": "^2.0.1",
-    "@tailwindcss/typography": "^0.5.19",
     "next": "16.1.7",
     "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "react-markdown": "^10.1.0",
-    "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1"
+    "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

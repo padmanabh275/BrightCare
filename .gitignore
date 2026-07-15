@@ -32,6 +32,18 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# secrets
+credentials.json
+*-service-account*.json
+
+# local runtime data
+/data/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.firecrawl/
 
 # vercel
 .vercel
