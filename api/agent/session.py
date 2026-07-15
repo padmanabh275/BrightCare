@@ -1,4 +1,4 @@
-"""Conversation sessions with optional SQLite persistence."""
+"""Conversation sessions — memory, SQLite, or Neon Postgres."""
 
 from __future__ import annotations
 
@@ -66,6 +66,42 @@ def _dt_from_json(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
+def _payload_to_session(data: dict[str, Any]) -> Session:
+    return Session(
+        chat_id=str(data["chat_id"]),
+        state=ConversationState(data.get("state", "idle")),
+        email=data.get("email"),
+        proposed_slot=_dt_from_json(data.get("proposed_slot")),
+        requested_slot=_dt_from_json(data.get("requested_slot")),
+        patient_name=data.get("patient_name"),
+        updated_at=_dt_from_json(data.get("updated_at")),
+        booking_in_progress=bool(data.get("booking_in_progress")),
+        last_booking_id=data.get("last_booking_id"),
+        pending_cancel_event_id=data.get("pending_cancel_event_id"),
+        reschedule_event_id=data.get("reschedule_event_id"),
+        waitlist_date=data.get("waitlist_date"),
+    )
+
+
+def _session_to_payload(session: Session) -> str:
+    return json.dumps(
+        {
+            "chat_id": session.chat_id,
+            "state": session.state.value,
+            "email": session.email,
+            "proposed_slot": _dt_to_json(session.proposed_slot),
+            "requested_slot": _dt_to_json(session.requested_slot),
+            "patient_name": session.patient_name,
+            "updated_at": _dt_to_json(session.updated_at),
+            "booking_in_progress": session.booking_in_progress,
+            "last_booking_id": session.last_booking_id,
+            "pending_cancel_event_id": session.pending_cancel_event_id,
+            "reschedule_event_id": session.reschedule_event_id,
+            "waitlist_date": session.waitlist_date,
+        }
+    )
+
+
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
@@ -122,41 +158,6 @@ class SqliteSessionStore(SessionStore):
             finally:
                 conn.close()
 
-    def _row_to_session(self, row: sqlite3.Row) -> Session:
-        data = json.loads(row["payload"])
-        return Session(
-            chat_id=str(data["chat_id"]),
-            state=ConversationState(data.get("state", "idle")),
-            email=data.get("email"),
-            proposed_slot=_dt_from_json(data.get("proposed_slot")),
-            requested_slot=_dt_from_json(data.get("requested_slot")),
-            patient_name=data.get("patient_name"),
-            updated_at=_dt_from_json(data.get("updated_at")),
-            booking_in_progress=bool(data.get("booking_in_progress")),
-            last_booking_id=data.get("last_booking_id"),
-            pending_cancel_event_id=data.get("pending_cancel_event_id"),
-            reschedule_event_id=data.get("reschedule_event_id"),
-            waitlist_date=data.get("waitlist_date"),
-        )
-
-    def _session_payload(self, session: Session) -> str:
-        return json.dumps(
-            {
-                "chat_id": session.chat_id,
-                "state": session.state.value,
-                "email": session.email,
-                "proposed_slot": _dt_to_json(session.proposed_slot),
-                "requested_slot": _dt_to_json(session.requested_slot),
-                "patient_name": session.patient_name,
-                "updated_at": _dt_to_json(session.updated_at),
-                "booking_in_progress": session.booking_in_progress,
-                "last_booking_id": session.last_booking_id,
-                "pending_cancel_event_id": session.pending_cancel_event_id,
-                "reschedule_event_id": session.reschedule_event_id,
-                "waitlist_date": session.waitlist_date,
-            }
-        )
-
     def get(self, chat_id: str) -> Session:
         if chat_id in self._sessions:
             return self._sessions[chat_id]
@@ -169,7 +170,7 @@ class SqliteSessionStore(SessionStore):
             finally:
                 conn.close()
         if row:
-            session = self._row_to_session(row)
+            session = _payload_to_session(json.loads(row["payload"]))
             self._sessions[chat_id] = session
             return session
         session = Session(chat_id=chat_id)
@@ -191,7 +192,7 @@ class SqliteSessionStore(SessionStore):
                     """,
                     (
                         session.chat_id,
-                        self._session_payload(session),
+                        _session_to_payload(session),
                         (session.updated_at or timeutil.clinic_now()).isoformat(),
                     ),
                 )
@@ -208,7 +209,7 @@ class SqliteSessionStore(SessionStore):
                 ).fetchall()
             finally:
                 conn.close()
-        sessions = [self._row_to_session(r) for r in rows]
+        sessions = [_payload_to_session(json.loads(r["payload"])) for r in rows]
         for s in sessions:
             self._sessions[s.chat_id] = s
         return sessions
@@ -224,14 +225,86 @@ class SqliteSessionStore(SessionStore):
                 conn.close()
 
 
+class PostgresSessionStore(SessionStore):
+    def __init__(self) -> None:
+        super().__init__()
+        from api.db import init_postgres_schema
+
+        init_postgres_schema()
+        self._db_lock = threading.Lock()
+
+    def get(self, chat_id: str) -> Session:
+        if chat_id in self._sessions:
+            return self._sessions[chat_id]
+        from api.db import pg_connection
+
+        with self._db_lock:
+            with pg_connection() as conn:
+                row = conn.execute(
+                    "SELECT payload FROM sessions WHERE chat_id = %s",
+                    (chat_id,),
+                ).fetchone()
+        if row:
+            session = _payload_to_session(json.loads(row["payload"]))
+            self._sessions[chat_id] = session
+            return session
+        session = Session(chat_id=chat_id)
+        self._sessions[chat_id] = session
+        return session
+
+    def save(self, session: Session) -> None:
+        from api.db import pg_connection
+
+        self._sessions[session.chat_id] = session
+        with self._db_lock:
+            with pg_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO sessions (chat_id, payload, updated_at)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (chat_id) DO UPDATE SET
+                        payload = EXCLUDED.payload,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    (
+                        session.chat_id,
+                        _session_to_payload(session),
+                        (session.updated_at or timeutil.clinic_now()).isoformat(),
+                    ),
+                )
+
+    def all_sessions(self) -> list[Session]:
+        from api.db import pg_connection
+
+        with self._db_lock:
+            with pg_connection() as conn:
+                rows = conn.execute(
+                    "SELECT payload FROM sessions ORDER BY updated_at DESC LIMIT 50"
+                ).fetchall()
+        sessions = [_payload_to_session(json.loads(r["payload"])) for r in rows]
+        for s in sessions:
+            self._sessions[s.chat_id] = s
+        return sessions
+
+    def clear_all(self) -> None:
+        from api.db import pg_connection
+
+        super().clear_all()
+        with self._db_lock:
+            with pg_connection() as conn:
+                conn.execute("DELETE FROM sessions")
+
+
 def _build_session_store() -> SessionStore:
     from api.config import get_settings
+    from api.db import get_database_url
 
     settings = get_settings()
     if settings.session_store == "memory":
         return SessionStore()
-    db_path = settings.data_dir / "sessions.db"
-    return SqliteSessionStore(db_path)
+    if get_database_url():
+        return PostgresSessionStore()
+    return SqliteSessionStore(settings.data_dir / "sessions.db")
 
 
 session_store = _build_session_store()

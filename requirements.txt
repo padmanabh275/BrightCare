@@ -11,3 +11,4 @@ fastapi-clerk-auth
 python-dotenv
 pytest
 pytest-asyncio
+psycopg[binary]==3.2.4

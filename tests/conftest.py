@@ -16,7 +16,7 @@ os.environ.pop("CLERK_JWKS_URL", None)
 
 @pytest.fixture(autouse=True)
 def _reset_singletons():
-    from api.agent.bookings import BookingStore, reset_booking_store
+    from api.agent.bookings import SqliteBookingStore, reset_booking_store
     from api.agent.rate_limit import chat_rate_limiter
     from api.agent.session import session_store
     from api.config import get_settings
@@ -24,12 +24,15 @@ def _reset_singletons():
 
     get_settings.cache_clear()
     os.environ["OPENAI_API_KEY"] = ""
+    os.environ["SESSION_STORE"] = "memory"
+    os.environ.pop("DATABASE_URL", None)
+    os.environ.pop("NEON_DATABASE_URL", None)
     session_store.clear_all()
     chat_rate_limiter.reset()
     set_calendar(None)
 
     with tempfile.TemporaryDirectory() as tmp:
-        reset_booking_store(BookingStore(Path(tmp) / "bookings.db"))
+        reset_booking_store(SqliteBookingStore(Path(tmp) / "bookings.db"))
         yield
         reset_booking_store(None)
 

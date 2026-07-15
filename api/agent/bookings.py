@@ -1,4 +1,4 @@
-"""Persistent booking history and waitlist (SQLite)."""
+"""Persistent booking history and waitlist (SQLite or Neon Postgres)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from api.agent import timeutil
 
@@ -62,7 +62,60 @@ def _mask_email(email: str) -> str:
     return f"{local[0]}…{local[-1]}@{domain}"
 
 
-class BookingStore:
+class BookingStore(Protocol):
+    def add_booking(
+        self, chat_id: str, event_id: str, start: datetime, email: str
+    ) -> BookingRecord: ...
+
+    def update_status(self, event_id: str, status: BookingStatus) -> None: ...
+
+    def update_start(
+        self, event_id: str, new_start: datetime, status: BookingStatus
+    ) -> None: ...
+
+    def get_active_booking(self, chat_id: str) -> BookingRecord | None: ...
+
+    def list_for_chat(self, chat_id: str, limit: int = 10) -> list[BookingRecord]: ...
+
+    def list_recent(self, limit: int = 20) -> list[BookingRecord]: ...
+
+    def upcoming_for_reminders(self) -> list[BookingRecord]: ...
+
+    def mark_reminder_sent(self, booking_id: int, kind: str) -> None: ...
+
+    def add_waitlist(self, chat_id: str, target_date: date, email: str) -> WaitlistEntry: ...
+
+    def pending_waitlist_for_date(self, target_date: date) -> list[WaitlistEntry]: ...
+
+    def mark_waitlist_notified(self, entry_id: int) -> None: ...
+
+
+def _booking_from_mapping(row: Any) -> BookingRecord:
+    return BookingRecord(
+        id=int(row["id"]),
+        chat_id=str(row["chat_id"]),
+        event_id=str(row["event_id"]),
+        start=datetime.fromisoformat(row["start_iso"]),
+        email=str(row["email"]),
+        status=BookingStatus(row["status"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        reminder_24h_sent=bool(row["reminder_24h_sent"]),
+        reminder_1h_sent=bool(row["reminder_1h_sent"]),
+    )
+
+
+def _waitlist_from_mapping(row: Any) -> WaitlistEntry:
+    return WaitlistEntry(
+        id=int(row["id"]),
+        chat_id=str(row["chat_id"]),
+        target_date=date.fromisoformat(row["target_date"]),
+        email=str(row["email"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        notified=bool(row["notified"]),
+    )
+
+
+class SqliteBookingStore:
     def __init__(self, db_path: str | Path) -> None:
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,7 +242,7 @@ class BookingStore:
                 ).fetchone()
             finally:
                 conn.close()
-        return _row_to_booking(row) if row else None
+        return _booking_from_mapping(row) if row else None
 
     def list_for_chat(self, chat_id: str, limit: int = 10) -> list[BookingRecord]:
         with self._lock:
@@ -206,7 +259,7 @@ class BookingStore:
                 ).fetchall()
             finally:
                 conn.close()
-        return [_row_to_booking(r) for r in rows]
+        return [_booking_from_mapping(r) for r in rows]
 
     def list_recent(self, limit: int = 20) -> list[BookingRecord]:
         with self._lock:
@@ -218,7 +271,7 @@ class BookingStore:
                 ).fetchall()
             finally:
                 conn.close()
-        return [_row_to_booking(r) for r in rows]
+        return [_booking_from_mapping(r) for r in rows]
 
     def upcoming_for_reminders(self) -> list[BookingRecord]:
         with self._lock:
@@ -234,7 +287,7 @@ class BookingStore:
                 ).fetchall()
             finally:
                 conn.close()
-        return [_row_to_booking(r) for r in rows]
+        return [_booking_from_mapping(r) for r in rows]
 
     def mark_reminder_sent(self, booking_id: int, kind: str) -> None:
         col = "reminder_24h_sent" if kind == "24h" else "reminder_1h_sent"
@@ -262,7 +315,7 @@ class BookingStore:
                     row = conn.execute(
                         "SELECT * FROM waitlist WHERE id = ?", (existing["id"],)
                     ).fetchone()
-                    return _row_to_waitlist(row)
+                    return _waitlist_from_mapping(row)
 
                 cur = conn.execute(
                     """
@@ -276,7 +329,7 @@ class BookingStore:
                 row = conn.execute("SELECT * FROM waitlist WHERE id = ?", (row_id,)).fetchone()
             finally:
                 conn.close()
-        return _row_to_waitlist(row)
+        return _waitlist_from_mapping(row)
 
     def pending_waitlist_for_date(self, target_date: date) -> list[WaitlistEntry]:
         with self._lock:
@@ -292,7 +345,7 @@ class BookingStore:
                 ).fetchall()
             finally:
                 conn.close()
-        return [_row_to_waitlist(r) for r in rows]
+        return [_waitlist_from_mapping(r) for r in rows]
 
     def mark_waitlist_notified(self, entry_id: int) -> None:
         with self._lock:
@@ -304,29 +357,177 @@ class BookingStore:
                 conn.close()
 
 
-def _row_to_booking(row: sqlite3.Row) -> BookingRecord:
-    return BookingRecord(
-        id=int(row["id"]),
-        chat_id=str(row["chat_id"]),
-        event_id=str(row["event_id"]),
-        start=datetime.fromisoformat(row["start_iso"]),
-        email=str(row["email"]),
-        status=BookingStatus(row["status"]),
-        created_at=datetime.fromisoformat(row["created_at"]),
-        reminder_24h_sent=bool(row["reminder_24h_sent"]),
-        reminder_1h_sent=bool(row["reminder_1h_sent"]),
-    )
+class PostgresBookingStore:
+    """Neon / any Postgres via DATABASE_URL."""
+
+    def __init__(self) -> None:
+        from api.db import init_postgres_schema
+
+        init_postgres_schema()
+
+    def add_booking(
+        self,
+        chat_id: str,
+        event_id: str,
+        start: datetime,
+        email: str,
+    ) -> BookingRecord:
+        from api.db import pg_connection
+
+        now = timeutil.clinic_now()
+        start_local = timeutil.to_clinic(start)
+        with pg_connection() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO bookings (chat_id, event_id, start_iso, email, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    chat_id,
+                    event_id,
+                    start_local.isoformat(),
+                    email,
+                    BookingStatus.BOOKED.value,
+                    now.isoformat(),
+                ),
+            ).fetchone()
+        return _booking_from_mapping(row)
+
+    def update_status(self, event_id: str, status: BookingStatus) -> None:
+        from api.db import pg_connection
+
+        with pg_connection() as conn:
+            conn.execute(
+                "UPDATE bookings SET status = %s WHERE event_id = %s",
+                (status.value, event_id),
+            )
+
+    def update_start(self, event_id: str, new_start: datetime, status: BookingStatus) -> None:
+        from api.db import pg_connection
+
+        start_local = timeutil.to_clinic(new_start)
+        with pg_connection() as conn:
+            conn.execute(
+                "UPDATE bookings SET start_iso = %s, status = %s WHERE event_id = %s",
+                (start_local.isoformat(), status.value, event_id),
+            )
+
+    def get_active_booking(self, chat_id: str) -> BookingRecord | None:
+        from api.db import pg_connection
+
+        with pg_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM bookings
+                WHERE chat_id = %s AND status = %s
+                ORDER BY start_iso DESC
+                LIMIT 1
+                """,
+                (chat_id, BookingStatus.BOOKED.value),
+            ).fetchone()
+        return _booking_from_mapping(row) if row else None
+
+    def list_for_chat(self, chat_id: str, limit: int = 10) -> list[BookingRecord]:
+        from api.db import pg_connection
+
+        with pg_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM bookings
+                WHERE chat_id = %s
+                ORDER BY start_iso DESC
+                LIMIT %s
+                """,
+                (chat_id, limit),
+            ).fetchall()
+        return [_booking_from_mapping(r) for r in rows]
+
+    def list_recent(self, limit: int = 20) -> list[BookingRecord]:
+        from api.db import pg_connection
+
+        with pg_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM bookings ORDER BY created_at DESC LIMIT %s",
+                (limit,),
+            ).fetchall()
+        return [_booking_from_mapping(r) for r in rows]
+
+    def upcoming_for_reminders(self) -> list[BookingRecord]:
+        from api.db import pg_connection
+
+        with pg_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM bookings
+                WHERE status = %s
+                ORDER BY start_iso ASC
+                """,
+                (BookingStatus.BOOKED.value,),
+            ).fetchall()
+        return [_booking_from_mapping(r) for r in rows]
+
+    def mark_reminder_sent(self, booking_id: int, kind: str) -> None:
+        from api.db import pg_connection
+
+        col = "reminder_24h_sent" if kind == "24h" else "reminder_1h_sent"
+        with pg_connection() as conn:
+            conn.execute(f"UPDATE bookings SET {col} = TRUE WHERE id = %s", (booking_id,))
+
+    def add_waitlist(self, chat_id: str, target_date: date, email: str) -> WaitlistEntry:
+        from api.db import pg_connection
+
+        now = timeutil.clinic_now()
+        with pg_connection() as conn:
+            existing = conn.execute(
+                """
+                SELECT id FROM waitlist
+                WHERE chat_id = %s AND target_date = %s AND notified = FALSE
+                """,
+                (chat_id, target_date.isoformat()),
+            ).fetchone()
+            if existing:
+                row = conn.execute(
+                    "SELECT * FROM waitlist WHERE id = %s", (existing["id"],)
+                ).fetchone()
+                return _waitlist_from_mapping(row)
+
+            row = conn.execute(
+                """
+                INSERT INTO waitlist (chat_id, target_date, email, created_at)
+                VALUES (%s, %s, %s, %s)
+                RETURNING *
+                """,
+                (chat_id, target_date.isoformat(), email, now.isoformat()),
+            ).fetchone()
+        return _waitlist_from_mapping(row)
+
+    def pending_waitlist_for_date(self, target_date: date) -> list[WaitlistEntry]:
+        from api.db import pg_connection
+
+        with pg_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM waitlist
+                WHERE target_date = %s AND notified = FALSE
+                ORDER BY created_at ASC
+                """,
+                (target_date.isoformat(),),
+            ).fetchall()
+        return [_waitlist_from_mapping(r) for r in rows]
+
+    def mark_waitlist_notified(self, entry_id: int) -> None:
+        from api.db import pg_connection
+
+        with pg_connection() as conn:
+            conn.execute(
+                "UPDATE waitlist SET notified = TRUE WHERE id = %s",
+                (entry_id,),
+            )
 
 
-def _row_to_waitlist(row: sqlite3.Row) -> WaitlistEntry:
-    return WaitlistEntry(
-        id=int(row["id"]),
-        chat_id=str(row["chat_id"]),
-        target_date=date.fromisoformat(row["target_date"]),
-        email=str(row["email"]),
-        created_at=datetime.fromisoformat(row["created_at"]),
-        notified=bool(row["notified"]),
-    )
+# Back-compat alias used by older imports/tests
+BookingStoreImpl = SqliteBookingStore
 
 
 _store: BookingStore | None = None
@@ -336,9 +537,13 @@ def get_booking_store() -> BookingStore:
     global _store
     if _store is None:
         from api.config import get_settings
+        from api.db import get_database_url
 
         settings = get_settings()
-        _store = BookingStore(settings.data_dir / "bookings.db")
+        if get_database_url():
+            _store = PostgresBookingStore()
+        else:
+            _store = SqliteBookingStore(settings.data_dir / "bookings.db")
     return _store
 
 

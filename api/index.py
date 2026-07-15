@@ -33,6 +33,14 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    from api.db import get_database_url, init_postgres_schema
+
+    if get_database_url():
+        try:
+            init_postgres_schema()
+            logger.info("Using Neon/Postgres DATABASE_URL")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to init Postgres schema")
     if settings.telegram_mode == "polling" and settings.telegram_bot_token:
         telegram_runtime.start_polling()
     elif settings.telegram_mode == "webhook":

@@ -36,6 +36,7 @@ class Settings:
     clerk_jwks_url: str | None
     clinic_name: str
     telegram_webapp_url: str | None
+    database_url: str | None
     data_dir: Path
     session_store: str
     jobs_secret: str | None
@@ -91,6 +92,12 @@ def get_settings() -> Settings:
 
     data_dir = Path(_env("DATA_DIR", "data") or "data")
     sa_file = materialize_google_credentials(data_dir)
+    database_url = _env("DATABASE_URL") or _env("NEON_DATABASE_URL")
+
+    # Auto-select postgres sessions when Neon URL is present
+    session_store = (_env("SESSION_STORE") or "").lower()
+    if not session_store:
+        session_store = "postgres" if database_url else "sqlite"
 
     smtp_user = _env("SMTP_USER")
     return Settings(
@@ -109,14 +116,14 @@ def get_settings() -> Settings:
         smtp_host=_env("SMTP_HOST", "smtp.gmail.com") or "smtp.gmail.com",
         smtp_port=int(_env("SMTP_PORT", "587") or "587"),
         smtp_user=smtp_user,
-        # Gmail requires a 16-char App Password, not the normal login password
         smtp_app_password=_env("SMTP_APP_PASSWORD"),
         smtp_from=_env("SMTP_FROM") or smtp_user,
         clerk_jwks_url=_env("CLERK_JWKS_URL"),
         clinic_name=_env("CLINIC_NAME", "BrightCare Clinic") or "BrightCare Clinic",
         telegram_webapp_url=_env("TELEGRAM_WEBAPP_URL")
         or _env("NEXT_PUBLIC_TELEGRAM_WEBAPP_URL"),
+        database_url=database_url,
         data_dir=data_dir,
-        session_store=(_env("SESSION_STORE", "sqlite") or "sqlite").lower(),
+        session_store=session_store,
         jobs_secret=_env("JOBS_SECRET"),
     )

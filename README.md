@@ -335,7 +335,18 @@ Blueprint: [`render.yaml`](render.yaml).
 6. Stop local uvicorn (or set local `TELEGRAM_MODE=polling` only when not using Render) so only one bot receiver is active.
 7. Telegram `/start` → Open booking app (Vercel UI → Render API).
 
-SQLite on **free tier** uses ephemeral storage (`/tmp`) — sessions/bookings reset when the service sleeps or redeploys. For persistent data, upgrade the Render plan and add a disk, or use Railway with a volume.
+SQLite on **free tier** is no longer required — set `DATABASE_URL` to a [Neon](https://neon.tech) Postgres connection string. Sessions, bookings, and waitlist live in Neon (shared by Render + local). Local/tests still fall back to SQLite/`memory` when `DATABASE_URL` is empty.
+
+### Neon Postgres (recommended persistence)
+
+1. Create a project at [console.neon.tech](https://console.neon.tech) (free tier is fine).
+2. Copy the connection string (**pooled** recommended, includes `sslmode=require`).
+3. Set the same value everywhere:
+   - Local `.env.local` → `DATABASE_URL=postgresql://...`
+   - Render → `DATABASE_URL`
+   - (Optional) Vercel — only needed if serverless routes talk to DB; BrightCare API owns the DB.
+4. Redeploy / restart API — tables `bookings`, `waitlist`, `sessions` are created automatically.
+5. No Render disk needed.
 
 ### API on Railway (alternative)
 
@@ -400,8 +411,9 @@ See `.env.example`. Key additions beyond the core take-home:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `SESSION_STORE` | `sqlite` | `sqlite` or `memory` (tests use memory) |
-| `DATA_DIR` | `data` | SQLite DBs for sessions + bookings |
+| `DATABASE_URL` | — | Neon Postgres URL (sessions + bookings + waitlist) |
+| `SESSION_STORE` | auto | `memory` / `sqlite` / `postgres` (auto postgres if DATABASE_URL) |
+| `DATA_DIR` | `data` | Local SQLite path when no DATABASE_URL |
 | `JOBS_SECRET` | — | Protects cron job endpoints |
 | `TELEGRAM_WEBAPP_URL` | — | HTTPS Mini App URL for bot menu |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | — | Cloud: paste credentials JSON (or base64) |

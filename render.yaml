@@ -17,9 +17,9 @@ services:
       - key: TELEGRAM_MODE
         value: webhook
       - key: SESSION_STORE
-        value: sqlite
-      - key: DATA_DIR
-        value: /tmp/brightcare-data
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
       - key: CLINIC_TIMEZONE
         value: Asia/Singapore
       - key: CLINIC_NAME
