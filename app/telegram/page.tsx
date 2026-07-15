@@ -73,7 +73,6 @@ export default function TelegramMiniAppPage() {
   const [step, setStep] = useState<"form" | "confirm" | "done" | "history">("form");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [inTelegram, setInTelegram] = useState(false);
   const [tg, setTg] = useState<TgWebApp | null>(null);
   const [slots, setSlots] = useState<SlotItem[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
@@ -106,12 +105,10 @@ export default function TelegramMiniAppPage() {
       // telegram-web-app.js exists even in a normal browser — only trust real Mini App sessions.
       if (id) {
         setChatId(id);
-        setInTelegram(true);
         return true;
       }
 
       if (hasInitData) {
-        setInTelegram(true);
         // User field can appear slightly after initData; keep polling briefly.
         return Date.now() - startedAt > 4000;
       }
