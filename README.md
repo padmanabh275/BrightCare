@@ -21,11 +21,11 @@ Telegram appointment booking and staff tools for **BrightCare Clinic**: live Goo
 ### Staff web (Clerk)
 - **Landing** — bright teal branding aligned with [brightcareclinic.com](https://www.brightcareclinic.com/)
 - **Current Status** (`/dashboard`) — integration health probes, FSM pipeline, sessions, recent bookings
-- **Consultation notes** (`/notes`) — paste visit notes → professional summary, action items, patient email draft → **Send to patient** via SMTP
+- **Consultation notes** (`/notes`) — paste visit notes → professional summary, action items, patient email draft → **Send to patient** via Resend (HTTPS) or SMTP
 
 ### Persistence & ops
 - **SQLite** session store and booking history (`DATA_DIR`, default `data/`)
-- Real health probes: Telegram `getMe`, Calendar, SMTP login, OpenAI
+- Real health probes: Telegram `getMe`, Calendar, Resend/SMTP, OpenAI
 - Cron endpoints: `POST /api/jobs/reminders` (24h / 1h), `POST /api/jobs/waitlist` (optional `JOBS_SECRET`)
 - **GitHub Actions** CI: pytest + `npm run build`
 
@@ -212,7 +212,15 @@ Restart the API — it calls `setChatMenuButton`. Send `/start` in the bot for *
 
 `OPENAI_API_KEY` — used for booking NLU and consultation-notes generation. Tests run without it (heuristics).
 
-### 4. Gmail SMTP
+### 4. Email (Resend on Render free, SMTP locally)
+
+**Render free blocks SMTP** — use [Resend](https://resend.com) over HTTPS:
+
+1. Create an API key → `RESEND_API_KEY`.
+2. Until a domain is verified: `EMAIL_FROM=BrightCare <onboarding@resend.dev>` (can only send to your Resend signup email).
+3. After verifying a domain: `EMAIL_FROM=BrightCare <bookings@yourdomain.com>`.
+
+**Local / paid Render** — Gmail SMTP still works as fallback:
 
 1. Enable **2-Step Verification** on the Gmail account.
 2. Create an **App Password** (16 characters) → `SMTP_APP_PASSWORD`.
