@@ -115,18 +115,32 @@ class TelegramRuntime:
             logger.debug("editMessageReplyMarkup failed", exc_info=True)
 
     def webapp_keyboard(self) -> dict[str, Any] | None:
+        """Persistent reply keyboard that opens the Mini App."""
         url = get_settings().telegram_webapp_url
         if not url:
             return None
         return {
             "keyboard": [
                 [{"text": "📅 Book appointment", "web_app": {"url": url}}],
+                [{"text": "💬 Chat to book"}, {"text": "❓ Help"}],
             ],
             "resize_keyboard": True,
+            "is_persistent": True,
+        }
+
+    def webapp_inline_keyboard(self) -> dict[str, Any] | None:
+        """One-tap inline Open App button (easier than hunting the reply keyboard)."""
+        url = get_settings().telegram_webapp_url
+        if not url:
+            return None
+        return {
+            "inline_keyboard": [
+                [{"text": "📱 Open booking app", "web_app": {"url": url}}],
+            ]
         }
 
     async def configure_menu_button(self) -> None:
-        """Set Telegram menu button to open the Mini App."""
+        """Set Telegram menu button (☰) to open the Mini App."""
         url = get_settings().telegram_webapp_url
         if not self.token or not url:
             if not url:
@@ -139,7 +153,7 @@ class TelegramRuntime:
                     json={
                         "menu_button": {
                             "type": "web_app",
-                            "text": "Book appointment",
+                            "text": "Book",
                             "web_app": {"url": url},
                         }
                     },
@@ -226,8 +240,22 @@ class TelegramRuntime:
         if not text:
             return
 
-        if text.strip().startswith("/start"):
+        stripped = text.strip()
+        lowered = stripped.lower()
+
+        if stripped.startswith("/start") or stripped.startswith("/app") or stripped.startswith("/book"):
             await self._handle_start(chat_id)
+            return
+
+        if lowered in {"💬 chat to book", "chat to book"}:
+            await self.send_message(
+                chat_id,
+                'Sure — tell me a day and time (e.g. "Can I book Monday at 2pm?").',
+            )
+            return
+
+        if lowered in {"❓ help", "help", "/help"}:
+            await self._handle_help(chat_id)
             return
 
         async with self._lock_for(chat_id):
@@ -240,14 +268,56 @@ class TelegramRuntime:
             await self.send_message(chat_id, reply.text, reply_markup=markup)
 
     async def _handle_start(self, chat_id: str) -> None:
-        kb = self.webapp_keyboard()
-        welcome = (
-            "Welcome to BrightCare Clinic!\n\n"
-            "Tap Book appointment below to open the booking app, "
-            "or chat here (e.g. “Can I book Monday at 2pm?”).\n\n"
-            "Mon–Fri 09:00–18:00 · 12 Orchard Rd"
+        settings = get_settings()
+        app_url = settings.telegram_webapp_url
+        if app_url:
+            welcome = (
+                "Welcome to BrightCare Clinic!\n\n"
+                "Tap Open booking app below to pick a day and time in one tap — "
+                "or type here (e.g. “Can I book Monday at 2pm?”).\n\n"
+                "You can also use the Book button next to the message box.\n\n"
+                "Mon–Fri 09:00–18:00 · 12 Orchard Rd"
+            )
+            # Prefer inline Open App (clear CTA); also attach reply keyboard for later
+            await self.send_message(
+                chat_id,
+                welcome,
+                reply_markup=self.webapp_inline_keyboard(),
+            )
+            kb = self.webapp_keyboard()
+            if kb:
+                await self.send_message(
+                    chat_id,
+                    "Tip: use 📅 Book appointment anytime from the keyboard below.",
+                    reply_markup=kb,
+                )
+        else:
+            welcome = (
+                "Welcome to BrightCare Clinic!\n\n"
+                "The in-chat booking app isn’t configured yet "
+                "(staff needs TELEGRAM_WEBAPP_URL).\n\n"
+                'For now, chat here — e.g. "Can I book Monday at 2pm?"\n\n'
+                "Mon–Fri 09:00–18:00 · 12 Orchard Rd"
+            )
+            await self.send_message(chat_id, welcome)
+
+    async def _handle_help(self, chat_id: str) -> None:
+        app_url = get_settings().telegram_webapp_url
+        lines = [
+            "BrightCare help",
+            "",
+            "• Book: say “Can I book Tuesday at 3pm?”",
+            "• Cancel: “cancel my appointment”",
+            "• Reschedule: “reschedule my appointment”",
+            "• FAQ: location, parking, hours, walk-ins",
+        ]
+        if app_url:
+            lines.insert(2, "• Or tap Open booking app / Book menu")
+        await self.send_message(
+            chat_id,
+            "\n".join(lines),
+            reply_markup=self.webapp_inline_keyboard(),
         )
-        await self.send_message(chat_id, welcome, reply_markup=kb)
 
     async def _handle_web_app_data(self, chat_id: str, data: dict[str, Any]) -> None:
         """Optional: handle Telegram.WebApp.sendData from the mini app."""
