@@ -335,7 +335,7 @@ Blueprint: [`render.yaml`](render.yaml).
 6. Stop local uvicorn (or set local `TELEGRAM_MODE=polling` only when not using Render) so only one bot receiver is active.
 7. Telegram `/start` → Open booking app (Vercel UI → Render API).
 
-SQLite persists on the Render disk at `/data`.
+SQLite on **free tier** uses ephemeral storage (`/tmp`) — sessions/bookings reset when the service sleeps or redeploys. For persistent data, upgrade the Render plan and add a disk, or use Railway with a volume.
 
 ### API on Railway (alternative)
 

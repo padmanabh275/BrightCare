@@ -13,17 +13,13 @@ services:
     plan: free
     region: singapore
     healthCheckPath: /health
-    disk:
-      name: brightcare-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: TELEGRAM_MODE
         value: webhook
       - key: SESSION_STORE
         value: sqlite
       - key: DATA_DIR
-        value: /data
+        value: /tmp/brightcare-data
       - key: CLINIC_TIMEZONE
         value: Asia/Singapore
       - key: CLINIC_NAME
