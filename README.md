@@ -37,13 +37,13 @@ Telegram appointment booking and staff tools for **BrightCare Clinic**: live Goo
 flowchart TB
   subgraph patients [Patients]
     TG[Telegram Chat]
-    Mini[/telegram Mini App]
+    Mini["Telegram Mini App"]
   end
 
-  subgraph staff [Staff — Clerk]
+  subgraph staff [Staff with Clerk]
     Landing[Landing]
-    Dash[/dashboard Current Status]
-    Notes[/notes Assistant]
+    Dash[Dashboard Current Status]
+    Notes[Notes Assistant]
   end
 
   subgraph next [Next.js]
@@ -53,23 +53,23 @@ flowchart TB
   end
 
   subgraph api [FastAPI]
-    Route[Routes + rate limits]
-    FSM[FSM + NLU]
-    NotesAPI[Notes generate / send]
-    Jobs[Reminders + waitlist jobs]
+    Route[Routes and rate limits]
+    FSM[FSM and NLU]
+    NotesAPI[Notes generate and send]
+    Jobs[Reminders and waitlist jobs]
   end
 
   subgraph external [Integrations]
     Cal[Google Calendar]
     SMTP[Gmail SMTP]
     OAI[OpenAI]
-    SQLite[(SQLite sessions / bookings / waitlist)]
+    SQLite[(SQLite sessions bookings waitlist)]
   end
 
   TG -->|polling or webhook| Route
-  Mini -->|/api/telegram/*| Route
-  Dash -->|/api/status| Route
-  Notes -->|/api/notes/*| NotesAPI
+  Mini -->|telegram book API| Route
+  Dash -->|status API| Route
+  Notes -->|notes API| NotesAPI
 
   Route --> FSM
   FSM --> Cal
@@ -89,14 +89,14 @@ flowchart TB
 flowchart TD
   Start([Patient message or Mini App submit]) --> RL{Rate limit OK?}
   RL -->|no| Slow[Ask to wait]
-  RL -->|yes| NLU[OpenAI / heuristic NLU]
+  RL -->|yes| NLU[OpenAI or heuristic NLU]
   NLU --> Intent{Intent}
 
-  Intent -->|book| Check[Check free/busy]
+  Intent -->|book| Check[Check free busy]
   Intent -->|cancel| CancelAsk[Confirm cancel]
-  Intent -->|reschedule| ReschedAsk[Ask new day/time]
+  Intent -->|reschedule| ReschedAsk[Ask new day and time]
   Intent -->|waitlist| WL[Add to waitlist]
-  Intent -->|faq / greeting| Reply[Static reply]
+  Intent -->|faq or greeting| Reply[Static reply]
 
   Check -->|free| EmailNeeded{Have email?}
   Check -->|busy| Nearest[Nearest same-day slot]
@@ -110,7 +110,7 @@ flowchart TD
   Propose -->|no| Start
 
   Create --> Save[(Record booking in SQLite)]
-  Save --> Mail[SMTP confirmation + .ics]
+  Save --> Mail[SMTP confirmation with ICS]
   Mail --> Done([Booked])
 
   CancelAsk -->|yes| Delete[Delete calendar event]
@@ -127,14 +127,14 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  A[Staff signs in — Clerk] --> B[/notes]
+  A[Staff signs in with Clerk] --> B[Notes page]
   B --> C[Paste consultation notes]
-  C --> D[POST /api/notes/generate]
+  C --> D[Generate notes API]
   D --> E[OpenAI]
-  E --> F[Summary + action items + email draft]
+  E --> F[Summary actions email draft]
   F --> G{Approve?}
-  G -->|edit / copy| B
-  G -->|Send to patient| H[POST /api/notes/send]
+  G -->|edit or copy| B
+  G -->|Send to patient| H[Send notes API]
   H --> I[Gmail SMTP]
   I --> J([Patient receives email])
 ```
@@ -143,10 +143,10 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  Cron[External cron / scheduler] --> R[POST /api/jobs/reminders]
-  Cron --> W[POST /api/jobs/waitlist]
+  Cron[External cron or scheduler] --> R[Reminders job]
+  Cron --> W[Waitlist job]
   R --> B[(Bookings DB)]
-  R --> T[Telegram 24h / 1h reminders]
+  R --> T[Telegram 24h and 1h reminders]
   W --> Cal[Calendar free slots]
   W --> T2[Notify waitlisted chats]
 ```
