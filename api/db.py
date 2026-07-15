@@ -52,6 +52,7 @@ def init_postgres_schema() -> None:
             chat_id TEXT NOT NULL,
             event_id TEXT NOT NULL,
             start_iso TEXT NOT NULL,
+            appointment_date TEXT,
             email TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'booked',
             created_at TEXT NOT NULL,
@@ -59,8 +60,10 @@ def init_postgres_schema() -> None:
             reminder_1h_sent BOOLEAN NOT NULL DEFAULT FALSE
         )
         """,
+        "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS appointment_date TEXT",
         "CREATE INDEX IF NOT EXISTS idx_bookings_chat ON bookings(chat_id)",
         "CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status)",
+        "CREATE INDEX IF NOT EXISTS idx_bookings_appointment_date ON bookings(appointment_date)",
         """
         CREATE TABLE IF NOT EXISTS waitlist (
             id BIGSERIAL PRIMARY KEY,
@@ -78,6 +81,11 @@ def init_postgres_schema() -> None:
             payload TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
+        """,
+        """
+        UPDATE bookings
+        SET appointment_date = LEFT(start_iso, 10)
+        WHERE appointment_date IS NULL AND start_iso IS NOT NULL
         """,
     ]
     with pg_connection() as conn:

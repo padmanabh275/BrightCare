@@ -51,22 +51,19 @@ type BookResponse = {
 
 type SlotItem = { start: string; label: string };
 
+type DateOption = { date: string; label: string; weekday: string };
+
 type Appointment = {
   start: string;
   status: string;
   email_masked: string;
+  date?: string;
 };
-
-const WEEKDAYS = [
-  { value: "monday", label: "Monday" },
-  { value: "tuesday", label: "Tuesday" },
-  { value: "wednesday", label: "Wednesday" },
-  { value: "thursday", label: "Thursday" },
-  { value: "friday", label: "Friday" },
-];
 
 export default function TelegramMiniAppPage() {
   const [chatId, setChatId] = useState<string | null>(null);
+  const [dateIso, setDateIso] = useState<string>("");
+  const [dateOptions, setDateOptions] = useState<DateOption[]>([]);
   const [weekday, setWeekday] = useState("monday");
   const [time, setTime] = useState("14:00");
   const [email, setEmail] = useState("tamarubopal@gmail.com");
@@ -127,13 +124,39 @@ export default function TelegramMiniAppPage() {
     };
   }, []);
 
-  const loadSlots = useCallback(async (day: string) => {
+  const loadDates = useCallback(async () => {
+    try {
+      const res = await fetch("/api/telegram/dates?count=10");
+      if (!res.ok) throw new Error("Failed to load dates");
+      const data = (await res.json()) as { dates: DateOption[] };
+      setDateOptions(data.dates);
+      if (data.dates.length > 0) {
+        setDateIso((prev) => prev || data.dates[0].date);
+        setWeekday(data.dates[0].weekday);
+      }
+    } catch {
+      setDateOptions([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDates();
+  }, [loadDates]);
+
+  const loadSlots = useCallback(async (selectedDate: string) => {
+    if (!selectedDate) return;
     setSlotsLoading(true);
     try {
-      const res = await fetch(`/api/telegram/slots?weekday=${day}`);
+      const res = await fetch(
+        `/api/telegram/slots?date=${encodeURIComponent(selectedDate)}`
+      );
       if (!res.ok) throw new Error("Failed to load slots");
-      const data = (await res.json()) as { slots: SlotItem[] };
+      const data = (await res.json()) as {
+        slots: SlotItem[];
+        weekday?: string;
+      };
       setSlots(data.slots);
+      if (data.weekday) setWeekday(data.weekday);
       if (data.slots.length > 0) {
         const hhmm = data.slots[0].start.slice(11, 16);
         setTime(hhmm);
@@ -146,8 +169,8 @@ export default function TelegramMiniAppPage() {
   }, []);
 
   useEffect(() => {
-    void loadSlots(weekday);
-  }, [weekday, loadSlots]);
+    if (dateIso) void loadSlots(dateIso);
+  }, [dateIso, loadSlots]);
 
   const loadAppointments = useCallback(async (id: string) => {
     try {
@@ -195,6 +218,7 @@ export default function TelegramMiniAppPage() {
       const data = await postBook({
         chat_id: chatId,
         action: "request",
+        date: dateIso,
         weekday,
         time,
         email: email.trim(),
@@ -214,7 +238,7 @@ export default function TelegramMiniAppPage() {
     } finally {
       setLoading(false);
     }
-  }, [chatId, weekday, time, email, postBook, tg, loadAppointments]);
+  }, [chatId, dateIso, weekday, time, email, postBook, tg, loadAppointments]);
 
   const submitConfirm = useCallback(async () => {
     if (!chatId) return;
@@ -324,20 +348,36 @@ export default function TelegramMiniAppPage() {
 
       {step === "form" && (
         <div className="mt-6 space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium">Day</span>
-            <select
-              className="mt-1 w-full rounded-md border border-[var(--line)] bg-white px-3 py-2"
-              value={weekday}
-              onChange={(e) => setWeekday(e.target.value)}
-            >
-              {WEEKDAYS.map((d) => (
-                <option key={d.value} value={d.value}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div>
+            <span className="text-sm font-medium">Date</span>
+            {dateOptions.length === 0 ? (
+              <p className="mt-2 text-sm text-[var(--muted)]">Loading dates…</p>
+            ) : (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {dateOptions.map((d) => {
+                  const selected = dateIso === d.date;
+                  return (
+                    <button
+                      key={d.date}
+                      type="button"
+                      onClick={() => {
+                        setDateIso(d.date);
+                        setWeekday(d.weekday);
+                      }}
+                      className="min-h-[44px] rounded-md border px-2 py-2 text-sm"
+                      style={{
+                        borderColor: selected ? "var(--brand)" : "var(--line)",
+                        background: selected ? "var(--bg-accent)" : "white",
+                        fontWeight: selected ? 600 : 400,
+                      }}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           <div>
             <span className="text-sm font-medium">Available times</span>

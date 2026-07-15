@@ -36,6 +36,7 @@ class BookingRecord:
         return {
             "id": self.id,
             "event_id": self.event_id[:8] + "…" if len(self.event_id) > 8 else self.event_id,
+            "date": local.date().isoformat(),
             "start": timeutil.format_slot(local),
             "start_iso": local.isoformat(),
             "status": self.status.value,
@@ -138,6 +139,7 @@ class SqliteBookingStore:
                         chat_id TEXT NOT NULL,
                         event_id TEXT NOT NULL,
                         start_iso TEXT NOT NULL,
+                        appointment_date TEXT,
                         email TEXT NOT NULL,
                         status TEXT NOT NULL DEFAULT 'booked',
                         created_at TEXT NOT NULL,
@@ -146,6 +148,8 @@ class SqliteBookingStore:
                     );
                     CREATE INDEX IF NOT EXISTS idx_bookings_chat ON bookings(chat_id);
                     CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+                    CREATE INDEX IF NOT EXISTS idx_bookings_appointment_date
+                        ON bookings(appointment_date);
 
                     CREATE TABLE IF NOT EXISTS waitlist (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,6 +160,21 @@ class SqliteBookingStore:
                         notified INTEGER NOT NULL DEFAULT 0
                     );
                     CREATE INDEX IF NOT EXISTS idx_waitlist_date ON waitlist(target_date);
+                    """
+                )
+                cols = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(bookings)").fetchall()
+                }
+                if "appointment_date" not in cols:
+                    conn.execute(
+                        "ALTER TABLE bookings ADD COLUMN appointment_date TEXT"
+                    )
+                conn.execute(
+                    """
+                    UPDATE bookings
+                    SET appointment_date = substr(start_iso, 1, 10)
+                    WHERE appointment_date IS NULL AND start_iso IS NOT NULL
                     """
                 )
                 conn.commit()
@@ -176,13 +195,16 @@ class SqliteBookingStore:
             try:
                 cur = conn.execute(
                     """
-                    INSERT INTO bookings (chat_id, event_id, start_iso, email, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO bookings (
+                        chat_id, event_id, start_iso, appointment_date, email, status, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         chat_id,
                         event_id,
                         start_local.isoformat(),
+                        start_local.date().isoformat(),
                         email,
                         BookingStatus.BOOKED.value,
                         now.isoformat(),
@@ -220,8 +242,17 @@ class SqliteBookingStore:
             conn = self._connect()
             try:
                 conn.execute(
-                    "UPDATE bookings SET start_iso = ?, status = ? WHERE event_id = ?",
-                    (start_local.isoformat(), status.value, event_id),
+                    """
+                    UPDATE bookings
+                    SET start_iso = ?, appointment_date = ?, status = ?
+                    WHERE event_id = ?
+                    """,
+                    (
+                        start_local.isoformat(),
+                        start_local.date().isoformat(),
+                        status.value,
+                        event_id,
+                    ),
                 )
                 conn.commit()
             finally:
@@ -379,14 +410,17 @@ class PostgresBookingStore:
         with pg_connection() as conn:
             row = conn.execute(
                 """
-                INSERT INTO bookings (chat_id, event_id, start_iso, email, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO bookings (
+                    chat_id, event_id, start_iso, appointment_date, email, status, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
                     chat_id,
                     event_id,
                     start_local.isoformat(),
+                    start_local.date().isoformat(),
                     email,
                     BookingStatus.BOOKED.value,
                     now.isoformat(),
@@ -409,8 +443,17 @@ class PostgresBookingStore:
         start_local = timeutil.to_clinic(new_start)
         with pg_connection() as conn:
             conn.execute(
-                "UPDATE bookings SET start_iso = %s, status = %s WHERE event_id = %s",
-                (start_local.isoformat(), status.value, event_id),
+                """
+                UPDATE bookings
+                SET start_iso = %s, appointment_date = %s, status = %s
+                WHERE event_id = %s
+                """,
+                (
+                    start_local.isoformat(),
+                    start_local.date().isoformat(),
+                    status.value,
+                    event_id,
+                ),
             )
 
     def get_active_booking(self, chat_id: str) -> BookingRecord | None:

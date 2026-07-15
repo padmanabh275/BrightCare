@@ -61,3 +61,22 @@ def next_weekday(from_dt: datetime, weekday: int) -> date:
     local = to_clinic(from_dt)
     days_ahead = (weekday - local.weekday()) % 7
     return (local + timedelta(days=days_ahead)).date()
+
+
+def upcoming_business_days(count: int = 10, from_dt: datetime | None = None) -> list[date]:
+    """Next `count` Mon–Fri clinic dates starting today (or from_dt)."""
+    from api.agent import business
+
+    local = to_clinic(from_dt or clinic_now())
+    days: list[date] = []
+    cursor = local.date()
+    while len(days) < count:
+        if cursor.weekday() in business.BUSINESS_WEEKDAYS:
+            days.append(cursor)
+        cursor = cursor + timedelta(days=1)
+    return days
+
+
+def format_day_label(day: date) -> str:
+    """e.g. Mon 20 Jul."""
+    return f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"

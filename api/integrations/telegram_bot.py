@@ -250,7 +250,7 @@ class TelegramRuntime:
         if lowered in {"💬 chat to book", "chat to book"}:
             await self.send_message(
                 chat_id,
-                'Sure — tell me a day and time (e.g. "Can I book Monday at 2pm?").',
+                'Sure — tell me a date and time (e.g. "Can I book 2026-07-20 at 2pm?").',
             )
             return
 
@@ -273,8 +273,8 @@ class TelegramRuntime:
         if app_url:
             welcome = (
                 "Welcome to BrightCare Clinic!\n\n"
-                "Tap Open booking app below to pick a day and time in one tap — "
-                "or type here (e.g. “Can I book Monday at 2pm?”).\n\n"
+                "Tap Open booking app below to pick a date and time in one tap — "
+                "or type here (e.g. “Can I book 2026-07-20 at 2pm?” or “Monday at 2pm”).\n\n"
                 "You can also use the Book button next to the message box.\n\n"
                 "Mon–Fri 09:00–18:00 · 12 Orchard Rd"
             )
@@ -296,7 +296,7 @@ class TelegramRuntime:
                 "Welcome to BrightCare Clinic!\n\n"
                 "The in-chat booking app isn’t configured yet "
                 "(staff needs TELEGRAM_WEBAPP_URL).\n\n"
-                'For now, chat here — e.g. "Can I book Monday at 2pm?"\n\n'
+                'For now, chat here — e.g. "Can I book 2026-07-20 at 2pm?"\n\n'
                 "Mon–Fri 09:00–18:00 · 12 Orchard Rd"
             )
             await self.send_message(chat_id, welcome)
@@ -306,7 +306,7 @@ class TelegramRuntime:
         lines = [
             "BrightCare help",
             "",
-            "• Book: say “Can I book Tuesday at 3pm?”",
+            "• Book: say “Can I book Tuesday at 3pm?” or “2026-07-20 at 14:00”",
             "• Cancel: “cancel my appointment”",
             "• Reschedule: “reschedule my appointment”",
             "• FAQ: location, parking, hours, walk-ins",
@@ -330,13 +330,15 @@ class TelegramRuntime:
         if action == "confirm":
             reply = await self._handle_message(chat_id, "yes")
         elif action == "request":
+            date_iso = str(payload.get("date") or "").strip()
             weekday = payload.get("weekday", "monday")
             time = payload.get("time", "2pm")
             email = payload.get("email", "")
             if email:
                 session_store.get(chat_id).email = email
+            day_part = date_iso or weekday
             reply = await self._handle_message(
-                chat_id, f"Can I book {weekday} at {time}?"
+                chat_id, f"Can I book {day_part} at {time}?"
             )
         else:
             reply = await self._handle_message(chat_id, str(raw))

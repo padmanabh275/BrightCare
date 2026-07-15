@@ -115,16 +115,32 @@ def heuristic_parse(text: str) -> IntentResult:
             weekday = idx
             break
 
+    iso_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+    # Avoid matching day/month fragments inside YYYY-MM-DD as times (e.g. "07").
+    time_haystack = lowered
+    if iso_match:
+        time_haystack = (
+            lowered[: iso_match.start()] + " " + lowered[iso_match.end() :]
+        ).strip()
+
     time_match = re.search(
         r"\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b",
-        lowered,
+        time_haystack,
         flags=re.IGNORECASE,
     )
-    if weekday is not None and time_match:
-        t = _parse_time_token(time_match.group(1))
-        if t:
-            day = timeutil.next_weekday(timeutil.clinic_now(), weekday)
+
+    t = _parse_time_token(time_match.group(1)) if time_match else None
+    if t and iso_match:
+        try:
+            from datetime import date as date_cls
+
+            day = date_cls.fromisoformat(iso_match.group(1))
             requested = timeutil.combine_clinic(day, t.hour, t.minute)
+        except ValueError:
+            requested = None
+    elif weekday is not None and t:
+        day = timeutil.next_weekday(timeutil.clinic_now(), weekday)
+        requested = timeutil.combine_clinic(day, t.hour, t.minute)
 
     if requested or re.search(r"\b(book|appointment|schedule|available|slot)\b", lowered):
         return IntentResult(intent="book", email=email, requested_start=requested)
@@ -151,10 +167,12 @@ def parse_intent(text: str) -> IntentResult:
             "Return ONLY compact JSON with keys: "
             "intent (greeting|faq|book|confirm|decline|provide_email|cancel|reschedule|waitlist|unclear), "
             "email (string|null), "
+            "date (YYYY-MM-DD|null), "
             "weekday (monday..sunday|null), "
             "time (HH:MM 24h|null), "
             "faq_topic (string|null). "
-            "Resolve relative weekdays to the next occurrence from current clinic date. "
+            "Prefer an explicit date when the user gave one (ISO or like 20 July 2026). "
+            "Otherwise resolve relative weekdays to the next occurrence from current clinic date. "
             "Do not invent times."
         )
         response = client.chat.completions.create(
@@ -196,14 +214,23 @@ def _from_llm_json(data: dict[str, Any], original: str) -> IntentResult:
         intent = "unclear"
     email = data.get("email") or extract_email(original)
     requested = None
-    weekday_name = (data.get("weekday") or "").lower() or None
     time_str = data.get("time")
-    if weekday_name in WEEKDAYS and time_str:
+    date_str = (data.get("date") or "").strip() or None
+    weekday_name = (data.get("weekday") or "").lower() or None
+
+    if time_str:
         try:
             parts = str(time_str).split(":")
             hour, minute = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
-            day = timeutil.next_weekday(timeutil.clinic_now(), WEEKDAYS[weekday_name])
-            requested = timeutil.combine_clinic(day, hour, minute)
+            day = None
+            if date_str:
+                from datetime import date as date_cls
+
+                day = date_cls.fromisoformat(date_str)
+            elif weekday_name in WEEKDAYS:
+                day = timeutil.next_weekday(timeutil.clinic_now(), WEEKDAYS[weekday_name])
+            if day is not None:
+                requested = timeutil.combine_clinic(day, hour, minute)
         except (ValueError, IndexError):
             requested = None
     if intent == "book" and requested is None:

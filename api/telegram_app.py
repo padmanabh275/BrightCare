@@ -23,6 +23,7 @@ async def miniapp_request(
     weekday: str,
     time_hhmm: str,
     email: str,
+    date_iso: str | None = None,
     booking_agent: BookingAgent | None = None,
 ) -> dict[str, str | None]:
     """Check slot / propose alternate; may require confirm step."""
@@ -30,7 +31,8 @@ async def miniapp_request(
     session = session_store.get(chat_id)
     session.email = email.strip()
 
-    text = f"Can I book {weekday} at {_human_time(time_hhmm)}?"
+    day_part = date_iso.strip() if date_iso else weekday
+    text = f"Can I book {day_part} at {_human_time(time_hhmm)}?"
     reply: AgentReply = await bot.handle(chat_id, text)
 
     if session.state in {

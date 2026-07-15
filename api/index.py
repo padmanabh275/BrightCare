@@ -151,15 +151,46 @@ async def status(authorization: str | None = Header(default=None)) -> dict[str, 
     }
 
 
+@app.get("/api/telegram/dates")
+async def telegram_dates(
+    count: int = Query(default=10, ge=1, le=30),
+) -> dict[str, Any]:
+    """Upcoming Mon–Fri clinic dates for Mini App date pickers."""
+    days = timeutil.upcoming_business_days(count)
+    return {
+        "dates": [
+            {
+                "date": d.isoformat(),
+                "label": timeutil.format_day_label(d),
+                "weekday": d.strftime("%A").lower(),
+            }
+            for d in days
+        ]
+    }
+
+
 @app.get("/api/telegram/slots")
 async def telegram_slots(
+    date: str | None = Query(default=None),
     weekday: str = Query(default="monday"),
 ) -> dict[str, Any]:
-    """Return available 30-min slot starts for the next occurrence of weekday."""
-    name = weekday.strip().lower()
-    if name not in WEEKDAYS:
-        raise HTTPException(status_code=400, detail="weekday must be monday..friday")
-    day = timeutil.next_weekday(timeutil.clinic_now(), WEEKDAYS[name])
+    """Return available 30-min slot starts for a calendar date (or next weekday)."""
+    from datetime import date as date_cls
+
+    day: date_cls
+    name: str
+    if date:
+        try:
+            day = date_cls.fromisoformat(date.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD") from exc
+        name = day.strftime("%A").lower()
+    else:
+        name = weekday.strip().lower()
+        if name not in WEEKDAYS:
+            raise HTTPException(status_code=400, detail="weekday must be monday..friday")
+        day = timeutil.next_weekday(timeutil.clinic_now(), WEEKDAYS[name])
+
     cal = get_calendar()
     slots = list_available_slots(day, cal)
     return {
@@ -212,11 +243,14 @@ async def telegram_book(payload: dict[str, Any]) -> dict[str, Any]:
         return await miniapp_confirm(chat_id)
 
     weekday = str(payload.get("weekday") or "monday").lower()
+    date_iso = str(payload.get("date") or "").strip() or None
     time_hhmm = str(payload.get("time") or "14:00")
     email = str(payload.get("email") or "").strip()
     if not email:
         raise HTTPException(status_code=400, detail="email required")
-    return await miniapp_request(chat_id, weekday, time_hhmm, email)
+    return await miniapp_request(
+        chat_id, weekday, time_hhmm, email, date_iso=date_iso
+    )
 
 
 @app.post("/api/dev/chat")
