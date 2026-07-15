@@ -6,7 +6,7 @@ export function TelegramWebAppScript() {
   return (
     <Script
       src="https://telegram.org/js/telegram-web-app.js"
-      strategy="afterInteractive"
+      strategy="beforeInteractive"
     />
   );
 }

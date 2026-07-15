@@ -15,9 +15,27 @@ type TgWebApp = {
     showProgress: (leaveActive?: boolean) => void;
     hideProgress: () => void;
   };
+  initData?: string;
   initDataUnsafe?: { user?: { id?: number } };
+  platform?: string;
   themeParams?: Record<string, string>;
 };
+
+function extractTelegramUserId(webApp: TgWebApp): string | null {
+  const unsafeId = webApp.initDataUnsafe?.user?.id;
+  if (unsafeId != null) return String(unsafeId);
+
+  const raw = webApp.initData || "";
+  if (!raw) return null;
+  try {
+    const userJson = new URLSearchParams(raw).get("user");
+    if (!userJson) return null;
+    const user = JSON.parse(userJson) as { id?: number };
+    return user.id != null ? String(user.id) : null;
+  } catch {
+    return null;
+  }
+}
 
 declare global {
   interface Window {
@@ -63,29 +81,48 @@ export default function TelegramMiniAppPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const init = () => {
+    const startedAt = Date.now();
+    const applyTheme = (webApp: TgWebApp) => {
+      const tp = webApp.themeParams;
+      if (tp?.button_color) {
+        document.documentElement.style.setProperty("--brand", tp.button_color);
+      }
+    };
+
+    const tryInit = (): boolean => {
       const webApp = window.Telegram?.WebApp;
       if (!webApp) return false;
+
       webApp.ready();
       webApp.expand();
-      if (!cancelled) {
-        setTg(webApp);
+      applyTheme(webApp);
+
+      if (cancelled) return false;
+
+      setTg(webApp);
+      const id = extractTelegramUserId(webApp);
+      const hasInitData = Boolean(webApp.initData && webApp.initData.length > 0);
+
+      // telegram-web-app.js exists even in a normal browser — only trust real Mini App sessions.
+      if (id) {
+        setChatId(id);
         setInTelegram(true);
-        const id = webApp.initDataUnsafe?.user?.id;
-        if (id) setChatId(String(id));
-        const tp = webApp.themeParams;
-        if (tp?.button_color) {
-          document.documentElement.style.setProperty(
-            "--brand",
-            tp.button_color
-          );
-        }
+        return true;
       }
-      return true;
+
+      if (hasInitData) {
+        setInTelegram(true);
+        // User field can appear slightly after initData; keep polling briefly.
+        return Date.now() - startedAt > 4000;
+      }
+
+      // No initData yet — keep waiting for script/Telegram inject (max ~5s).
+      return Date.now() - startedAt > 5000;
     };
-    if (init()) return;
+
+    if (tryInit()) return;
     const timer = window.setInterval(() => {
-      if (init()) window.clearInterval(timer);
+      if (tryInit()) window.clearInterval(timer);
     }, 100);
     return () => {
       cancelled = true;
@@ -207,7 +244,9 @@ export default function TelegramMiniAppPage() {
       else if (step === "confirm") void submitConfirm();
     };
     tg.MainButton.onClick(onMain);
-    if (step === "form") {
+    if (!chatId) {
+      tg.MainButton.hide();
+    } else if (step === "form") {
       tg.MainButton.setText("Check availability");
       tg.MainButton.show();
     } else if (step === "confirm") {
@@ -217,7 +256,7 @@ export default function TelegramMiniAppPage() {
       tg.MainButton.hide();
     }
     return () => tg.MainButton.offClick(onMain);
-  }, [tg, step, submitRequest, submitConfirm]);
+  }, [tg, step, chatId, submitRequest, submitConfirm]);
 
   useEffect(() => {
     if (!tg) return;
@@ -255,10 +294,12 @@ export default function TelegramMiniAppPage() {
         </button>
       </div>
 
-      {!inTelegram && (
+      {!chatId && (
         <p className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          Open this page from the BrightCare Telegram bot menu (Open App) to
-          book.
+          Open this page from <strong>@BrightCare_bot</strong> using{" "}
+          <strong>Open booking app</strong> or the menu <strong>Book</strong>{" "}
+          button — not by pasting the website link. Then try Check availability
+          again.
         </p>
       )}
 
@@ -344,11 +385,15 @@ export default function TelegramMiniAppPage() {
           </label>
           <button
             type="button"
-            disabled={loading}
+            disabled={loading || !chatId}
             onClick={() => void submitRequest()}
             className="w-full rounded-md bg-[var(--brand)] py-3 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {loading ? "Checking…" : "Check availability"}
+            {loading
+              ? "Checking…"
+              : !chatId
+                ? "Open from Telegram bot to continue"
+                : "Check availability"}
           </button>
         </div>
       )}
