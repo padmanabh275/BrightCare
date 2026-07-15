@@ -298,29 +298,74 @@ CI runs the same on push/PR (`.github/workflows/ci.yml`).
 
 ## Deploy
 
-### API (Render / Railway / Fly)
+### Frontend (Vercel) — already live
+
+Site: https://bright-care-five.vercel.app/
+
+Set on Vercel (Production, then Redeploy):
+
+| Variable | Value |
+|----------|--------|
+| `API_PROXY_URL` | `https://YOUR-API.onrender.com` (no trailing slash) |
+| `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | `BrightCare_bot` |
+| `NEXT_PUBLIC_TELEGRAM_WEBAPP_URL` | `https://bright-care-five.vercel.app/telegram` |
+| Clerk keys | same as local |
+
+### API on Render (recommended)
+
+Blueprint: [`render.yaml`](render.yaml).
+
+1. [Render](https://render.com/) → **New** → **Blueprint** → connect `padmanabh275/BrightCare`.
+2. Fill secrets (`sync: false` in the blueprint):
+
+| Secret | Notes |
+|--------|--------|
+| `TELEGRAM_BOT_TOKEN` | from BotFather |
+| `TELEGRAM_BOT_USERNAME` | `BrightCare_bot` |
+| `PUBLIC_BASE_URL` | your Render URL after first deploy, e.g. `https://brightcare-api.onrender.com` |
+| `OPENAI_API_KEY` | |
+| `GOOGLE_CALENDAR_ID` | clinic calendar id |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | full JSON from `credentials.json` (or base64) |
+| `SMTP_USER` / `SMTP_APP_PASSWORD` / `SMTP_FROM` | Gmail app password |
+| `CLERK_JWKS_URL` | for `/api/status` and notes |
+
+3. After first deploy, set `PUBLIC_BASE_URL` to the live service URL → Manual Deploy.
+4. Check `https://YOUR-API.onrender.com/health`.
+5. Vercel: `API_PROXY_URL=https://YOUR-API.onrender.com` → Redeploy.
+6. Stop local uvicorn (or set local `TELEGRAM_MODE=polling` only when not using Render) so only one bot receiver is active.
+7. Telegram `/start` → Open booking app (Vercel UI → Render API).
+
+SQLite persists on the Render disk at `/data`.
+
+### API on Railway (alternative)
+
+1. [Railway](https://railway.app/) → New Project → Deploy GitHub `BrightCare`.
+2. Uses [`Dockerfile`](Dockerfile) + [`railway.toml`](railway.toml).
+3. Add a volume at `/data`.
+4. Same env vars as Render (`TELEGRAM_MODE=webhook`, `PUBLIC_BASE_URL`, `GOOGLE_SERVICE_ACCOUNT_JSON`, …).
+5. Point Vercel `API_PROXY_URL` at the Railway HTTPS URL.
+
+### Google credentials on the cloud
+
+Do not commit `credentials.json`. Paste into:
 
 ```env
-TELEGRAM_MODE=webhook
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_WEBHOOK_SECRET=...
-PUBLIC_BASE_URL=https://your-api.onrender.com
-SESSION_STORE=sqlite
-DATA_DIR=/data
-JOBS_SECRET=...
-# + calendar, SMTP, OpenAI, Clerk, etc.
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 ```
 
-On startup: `setWebhook` → `{PUBLIC_BASE_URL}/telegram/webhook`.
+The API writes it to `$DATA_DIR/credentials.json` on boot.
+
+### Docker smoke test
 
 ```bash
 docker build -t brightcare-api .
-docker run -p 8000:8000 --env-file .env -v ./credentials.json:/app/credentials.json brightcare-api
+docker run -p 8000:8000 \
+  -e TELEGRAM_MODE=polling \
+  -e GOOGLE_SERVICE_ACCOUNT_JSON="$(cat credentials.json)" \
+  -e GOOGLE_CALENDAR_ID=... \
+  -e OPENAI_API_KEY=... \
+  brightcare-api
 ```
-
-### Frontend (Vercel)
-
-Deploy the Next.js app. Set `API_PROXY_URL` to the API HTTPS origin, Clerk keys, and `TELEGRAM_WEBAPP_URL` / `NEXT_PUBLIC_TELEGRAM_WEBAPP_URL` to `https://your-app.vercel.app/telegram`.
 
 ### Back to local polling
 
@@ -328,7 +373,16 @@ Deploy the Next.js app. Set `API_PROXY_URL` to the API HTTPS origin, Clerk keys,
 TELEGRAM_MODE=polling
 ```
 
-Restart uvicorn — it calls `deleteWebhook`.
+Restart local uvicorn — it calls `deleteWebhook`. Pause the Render service if both would fight over Telegram.
+
+### Cron jobs (optional)
+
+```
+POST https://YOUR-API.onrender.com/api/jobs/reminders
+Header: X-Jobs-Secret: <JOBS_SECRET>
+```
+
+Same path for `/api/jobs/waitlist`.
 
 ## Demo script
 
@@ -350,6 +404,8 @@ See `.env.example`. Key additions beyond the core take-home:
 | `DATA_DIR` | `data` | SQLite DBs for sessions + bookings |
 | `JOBS_SECRET` | — | Protects cron job endpoints |
 | `TELEGRAM_WEBAPP_URL` | — | HTTPS Mini App URL for bot menu |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | — | Cloud: paste credentials JSON (or base64) |
+| `API_PROXY_URL` | localhost | Vercel → public FastAPI origin |
 
 ## Assumptions
 

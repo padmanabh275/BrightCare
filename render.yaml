@@ -1,0 +1,62 @@
+# BrightCare FastAPI on Render
+# Blueprint: https://render.com/docs/blueprint-spec
+#
+# After first deploy:
+# 1. Copy the service URL → PUBLIC_BASE_URL and TELEGRAM webhooks
+# 2. On Vercel set API_PROXY_URL to that same URL (no trailing slash)
+# 3. Redeploy Vercel
+
+services:
+  - type: web
+    name: brightcare-api
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    disk:
+      name: brightcare-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: TELEGRAM_MODE
+        value: webhook
+      - key: SESSION_STORE
+        value: sqlite
+      - key: DATA_DIR
+        value: /data
+      - key: CLINIC_TIMEZONE
+        value: Asia/Singapore
+      - key: CLINIC_NAME
+        value: BrightCare Clinic
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: TELEGRAM_WEBAPP_URL
+        value: https://bright-care-five.vercel.app/telegram
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: GOOGLE_CALENDAR_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_APP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: JOBS_SECRET
+        generateValue: true

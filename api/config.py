@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -48,6 +49,34 @@ def _env(name: str, default: str | None = None) -> str | None:
     return stripped or None
 
 
+def materialize_google_credentials(data_dir: Path) -> str | None:
+    """
+    Resolve a service-account JSON path for local or cloud.
+
+    Prefer GOOGLE_SERVICE_ACCOUNT_FILE if the file exists.
+    Else write GOOGLE_SERVICE_ACCOUNT_JSON (raw JSON or base64) into data_dir.
+    """
+    existing = _env("GOOGLE_SERVICE_ACCOUNT_FILE")
+    if existing and Path(existing).is_file():
+        return existing
+
+    raw = _env("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not raw:
+        return existing
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    target = data_dir / "credentials.json"
+    text = raw
+    # Heuristic: if it's not starting with '{', try base64
+    if not text.lstrip().startswith("{"):
+        try:
+            text = base64.b64decode(text).decode("utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+    target.write_text(text, encoding="utf-8")
+    return str(target)
+
+
 @lru_cache
 def get_settings() -> Settings:
     tz_name = _env("CLINIC_TIMEZONE", "Asia/Singapore") or "Asia/Singapore"
@@ -59,6 +88,9 @@ def get_settings() -> Settings:
     mode = (_env("TELEGRAM_MODE") or "polling").lower()
     if mode not in {"polling", "webhook"}:
         mode = "polling"
+
+    data_dir = Path(_env("DATA_DIR", "data") or "data")
+    sa_file = materialize_google_credentials(data_dir)
 
     smtp_user = _env("SMTP_USER")
     return Settings(
@@ -73,7 +105,7 @@ def get_settings() -> Settings:
         telegram_webhook_secret=_env("TELEGRAM_WEBHOOK_SECRET"),
         public_base_url=_env("PUBLIC_BASE_URL"),
         google_calendar_id=_env("GOOGLE_CALENDAR_ID"),
-        google_service_account_file=_env("GOOGLE_SERVICE_ACCOUNT_FILE"),
+        google_service_account_file=sa_file,
         smtp_host=_env("SMTP_HOST", "smtp.gmail.com") or "smtp.gmail.com",
         smtp_port=int(_env("SMTP_PORT", "587") or "587"),
         smtp_user=smtp_user,
@@ -84,7 +116,7 @@ def get_settings() -> Settings:
         clinic_name=_env("CLINIC_NAME", "BrightCare Clinic") or "BrightCare Clinic",
         telegram_webapp_url=_env("TELEGRAM_WEBAPP_URL")
         or _env("NEXT_PUBLIC_TELEGRAM_WEBAPP_URL"),
-        data_dir=Path(_env("DATA_DIR", "data") or "data"),
+        data_dir=data_dir,
         session_store=(_env("SESSION_STORE", "sqlite") or "sqlite").lower(),
         jobs_secret=_env("JOBS_SECRET"),
     )
