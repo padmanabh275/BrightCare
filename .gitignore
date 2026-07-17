@@ -36,6 +36,7 @@ yarn-error.log*
 
 # secrets
 credentials.json
+google_sa_base64.txt
 *-service-account*.json
 
 # local runtime data
@@ -47,6 +48,9 @@ credentials.json
 
 # vercel
 .vercel
+
+# local agent / skills installs (Render MCP skills, etc.)
+.agents/
 
 # typescript
 *.tsbuildinfo

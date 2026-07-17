@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -58,6 +60,10 @@ def materialize_google_credentials(data_dir: Path) -> str | None:
 
     Prefer GOOGLE_SERVICE_ACCOUNT_FILE if the file exists.
     Else write GOOGLE_SERVICE_ACCOUNT_JSON (raw JSON or base64) into data_dir.
+
+    Cloud env editors often mangle multi-line JSON, so base64 is the safest
+    way to provide the value. We validate the result is real JSON before
+    writing so a bad paste surfaces clearly instead of silently falling back.
     """
     existing = _env("GOOGLE_SERVICE_ACCOUNT_FILE")
     if existing and Path(existing).is_file():
@@ -67,15 +73,33 @@ def materialize_google_credentials(data_dir: Path) -> str | None:
     if not raw:
         return existing
 
+    # Strip accidental wrapping quotes from env editors.
+    text = raw.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        text = text[1:-1].strip()
+
+    if not text.lstrip().startswith("{"):
+        # Assume base64; tolerate whitespace/newlines inserted by env editors.
+        compact = "".join(text.split())
+        try:
+            text = base64.b64decode(compact, validate=False).decode("utf-8")
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).error(
+                "GOOGLE_SERVICE_ACCOUNT_JSON is neither JSON nor valid base64"
+            )
+            return existing
+
+    try:
+        json.loads(text)
+    except json.JSONDecodeError:
+        logging.getLogger(__name__).error(
+            "GOOGLE_SERVICE_ACCOUNT_JSON did not parse as JSON — "
+            "paste the credentials.json as base64 to avoid newline mangling"
+        )
+        return existing
+
     data_dir.mkdir(parents=True, exist_ok=True)
     target = data_dir / "credentials.json"
-    text = raw
-    # Heuristic: if it's not starting with '{', try base64
-    if not text.lstrip().startswith("{"):
-        try:
-            text = base64.b64decode(text).decode("utf-8")
-        except Exception:  # noqa: BLE001
-            pass
     target.write_text(text, encoding="utf-8")
     return str(target)
 
