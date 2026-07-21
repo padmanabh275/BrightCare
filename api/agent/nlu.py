@@ -142,7 +142,10 @@ def heuristic_parse(text: str) -> IntentResult:
         day = timeutil.next_weekday(timeutil.clinic_now(), weekday)
         requested = timeutil.combine_clinic(day, t.hour, t.minute)
 
-    if requested or re.search(r"\b(book|appointment|schedule|available|slot)\b", lowered):
+    if requested or re.search(
+        r"\b(book|appointment|schedule|available|slot|meeting|visit|plan)\b",
+        lowered,
+    ):
         return IntentResult(intent="book", email=email, requested_start=requested)
 
     if email:

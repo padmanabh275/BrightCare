@@ -191,6 +191,28 @@ class TelegramRuntime:
         except Exception:  # noqa: BLE001
             logger.exception("deleteWebhook failed")
 
+    @staticmethod
+    def _sanitize_webhook_secret(raw: str | None) -> str | None:
+        """Telegram secret_token allows only A–Z a–z 0–9 _ - (1–256 chars).
+
+        If the env value contains other characters, omit secret_token entirely so
+        setWebhook succeeds; verification also skips when secret is unset.
+        """
+        if not raw:
+            return None
+        stripped = raw.strip()
+        if not stripped:
+            return None
+        if not all(ch.isalnum() or ch in "_-" for ch in stripped):
+            logger.warning(
+                "TELEGRAM_WEBHOOK_SECRET has unallowed characters "
+                "(Telegram allows only A-Z a-z 0-9 _ -). "
+                "Registering webhook without secret_token — "
+                "set a clean secret on Render and redeploy."
+            )
+            return None
+        return stripped[:256]
+
     async def register_webhook(self) -> None:
         """Register Telegram webhook for deploy mode (TELEGRAM_MODE=webhook)."""
         settings = get_settings()
@@ -201,18 +223,37 @@ class TelegramRuntime:
         if not base:
             logger.warning("Cannot setWebhook — set PUBLIC_BASE_URL (HTTPS)")
             return
+        if "vercel.app" in base.lower():
+            logger.error(
+                "PUBLIC_BASE_URL points at Vercel (%s). Chat messages will not "
+                "reach FastAPI. Set PUBLIC_BASE_URL to the Render API origin "
+                "(e.g. https://brightcare-api.onrender.com).",
+                base,
+            )
         webhook_url = f"{base}/telegram/webhook"
         payload: dict[str, Any] = {
             "url": webhook_url,
             "allowed_updates": ["message", "callback_query"],
             "drop_pending_updates": False,
         }
-        if settings.telegram_webhook_secret:
-            payload["secret_token"] = settings.telegram_webhook_secret
+        secret = self._sanitize_webhook_secret(settings.telegram_webhook_secret)
+        if secret:
+            payload["secret_token"] = secret
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post(self._url("setWebhook"), json=payload)
                 logger.info("setWebhook (%s): %s", webhook_url, resp.text[:300])
+                try:
+                    body = resp.json()
+                except Exception:  # noqa: BLE001
+                    body = {}
+                if resp.status_code >= 400 or (
+                    isinstance(body, dict) and body.get("ok") is False
+                ):
+                    logger.error(
+                        "Telegram setWebhook failed — bot chat will not work "
+                        "until PUBLIC_BASE_URL and TELEGRAM_WEBHOOK_SECRET are valid"
+                    )
         except Exception:  # noqa: BLE001
             logger.exception("setWebhook failed")
 
