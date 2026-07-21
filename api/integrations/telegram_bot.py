@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from api.agent.fsm import AgentReply, BookingAgent, agent as default_agent
+from api.agent.rate_limit import chat_rate_limiter
 from api.agent.session import session_store
 from api.agent.timeutil import format_slot_short, to_clinic
 from api.config import get_settings
